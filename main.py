@@ -50,7 +50,7 @@ class CausalSelfAttention(nn.Module):
         )  # (B, nh, T, hs)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
         att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
-        att = F.softmax(att, dim=1)
+        att = F.softmax(att, dim=-1)
         y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) => (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         # output projection
@@ -102,6 +102,24 @@ class GPT(nn.Module):
             )
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+    def forward(self, idx):
+        B, T = idx.size()
+        assert (
+            T <= self.config.block_size
+        ), f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
+        # forward the token and position embeddings
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        pos_emb = self.transformer.wpe(pos)
+        tok_emb = self.transformer.wte(idx)
+        x = tok_emb + pos_emb
+        # forward the blocks of the transformer
+        for block in self.transformer.h:
+            x = block(x)
+        # forward the final layernorm and the classifier
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x)  # (B, T, vocab_size)
+        return logits
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -167,4 +185,41 @@ class GPT(nn.Module):
         return model
 
 
+max_return_sequence = 5
+max_length = 30
+
 model = GPT.from_pretrained("gpt2")
+model.eval()
+model.to("cuda")
+
+# prefix tokens
+import tiktoken
+
+enc = tiktoken.get_encoding("gpt2")
+tokens = enc.encode("Hello, I'm a language model,")
+tokens = torch.tensor(tokens, dtype=torch.long)
+tokens = tokens.unsqueeze(0).repeat(max_return_sequence, 1)
+x = tokens.to("cuda")
+
+# generate
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+while x.size(1) < max_length:
+    with torch.no_grad():
+        logits = model(x)
+
+        logits = logits[:, -1, :]
+        probs = F.softmax(logits, dim=-1)
+        topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+
+        ix = torch.multinomial(topk_probs, 1)
+
+        xcol = torch.gather(topk_indices, -1, ix)
+
+        x = torch.cat((x, xcol), dim=1)
+
+# print the generated text
+for i in range(max_return_sequence):
+    tokens = x[i, :max_length].tolist()
+    decode = enc.decode(tokens)
+    print(">", decode)
