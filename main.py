@@ -200,6 +200,7 @@ max_length = 30
 import tiktoken
 
 enc = tiktoken.get_encoding("gpt2")
+device = "cuda"
 
 with open("input.txt", "r") as f:
     text = f.read()
@@ -209,15 +210,23 @@ enc = tiktoken.get_encoding("gpt2")
 B, T = 4, 32
 tokens = enc.encode(text)
 buf = torch.tensor(tokens[: B * T + 1])
+buf = buf.to(device)
 x = buf[:-1].view(B, T)
 y = buf[1:].view(B, T)
 
 model = GPT(GPTConfig())
 model.eval()
-model.to("cpu")
-logits, loss = model(x, y)
+model.to(device)
+# logits, loss = model(x, y)
 
-print(loss)
+# optimization
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+for i in range(50):
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"step{i}, loss: {loss.item()}")
 
 import sys
 
