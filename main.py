@@ -189,18 +189,34 @@ max_return_sequence = 5
 max_length = 30
 
 # model = GPT.from_pretrained("gpt2")
-model = GPT(GPTConfig())
-model.eval()
-model.to("cuda")
+
 
 # prefix tokens
 import tiktoken
 
 enc = tiktoken.get_encoding("gpt2")
-tokens = enc.encode("Hello, I'm a language model,")
-tokens = torch.tensor(tokens, dtype=torch.long)
-tokens = tokens.unsqueeze(0).repeat(max_return_sequence, 1)
-x = tokens.to("cuda")
+
+with open("input.txt", "r") as f:
+    text = f.read()
+
+text = text[:1000]
+enc = tiktoken.get_encoding("gpt2")
+B, T = 4, 32
+tokens = enc.encode(text)
+buf = torch.tensor(tokens[: B * T + 1])
+x = buf[:-1].view(B, T)
+y = buf[1:].view(B, T)
+
+model = GPT(GPTConfig())
+model.eval()
+model.to("cpu")
+logits = model(x)
+print("Printing shape")
+print(logits.shape)
+
+import sys
+
+sys.exit(0)
 
 # generate
 torch.manual_seed(42)
