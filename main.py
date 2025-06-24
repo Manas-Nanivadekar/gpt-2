@@ -188,7 +188,8 @@ class GPT(nn.Module):
 max_return_sequence = 5
 max_length = 30
 
-model = GPT.from_pretrained("gpt2")
+# model = GPT.from_pretrained("gpt2")
+model = GPT(GPTConfig())
 model.eval()
 model.to("cuda")
 
