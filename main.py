@@ -329,12 +329,14 @@ optimizer = model.configure_optimizers(
 for step in range(50):
     t0 = time.time()
     optimizer.zero_grad()
+    loss_accum = 0.0
     for micro_step in range(grad_accum_steps):
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
         with torch.autocast(device_type=device, dtype=torch.float16):
             logits, loss = model(x, y)
         loss = loss / grad_accum_steps
+        loss_accum += loss.detach()
         loss.backward()
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     lr = get_lr(step)
@@ -346,7 +348,7 @@ for step in range(50):
     dt = (t1 - t0) * 1000
     tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
     print(
-        f"step{step}, loss: {loss.item()}, norm: {norm:.4f},dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}"
+        f"step{step}, loss: {loss_accum.item():.6f}, norm: {norm:.4f},dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}"
     )
 
 import sys
