@@ -277,7 +277,9 @@ class DataLoaderLite:
         assert len(shards) > 0, f"no shards found for split {split}"
         if master_process:
             print(f"found {len(shards)} shards for split {split}")
+        self.reset()
 
+    def reset(self):
         # state, init at shard zero
         self.current_shard = 0
         self.tokens = load_tokens(self.shards[self.current_shard])
@@ -321,7 +323,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 total_batch_size = 524288
-B = 16
+B = 64
 T = 1024
 assert (
     total_batch_size % (B * T * ddp_world_size) == 0
@@ -333,6 +335,9 @@ if master_process:
 
 train_loader = DataLoaderLite(
     B=B, T=T, process_rank=ddp_rank, num_proccesses=ddp_world_size, split="train"
+)
+val_loader = DataLoaderLite(
+    B=B, T=T, process_rank=ddp_rank, num_proccesses=ddp_world_size, split="val"
 )
 torch.set_float32_matmul_precision("high")
 
@@ -372,6 +377,26 @@ optimizer = raw_model.configure_optimizers(
 
 for step in range(50):
     t0 = time.time()
+    # once in a while evaluate our validation loss
+    if step % 100 == 0:
+        model.eval()
+        val_loader.reset()
+        with torch.no_grad():
+            val_loss_accum = 0.0
+            val_loss_steps = 20
+            for _ in range(val_loss_steps):
+                x, y = val_loader.next_batch()
+                x, y = x.to(device), y.to(device)
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits, loss = model(x, y)
+                loss = loss / val_loss_steps
+                val_loss_accum += loss.detach()
+        if ddp:
+            dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+        if master_process:
+            print(f"validation loss: {val_loss_accum.item():.4f}")
+    # training loop
+    model.train()
     optimizer.zero_grad()
     loss_accum = 0.0
     for micro_step in range(grad_accum_steps):
