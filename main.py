@@ -375,6 +375,8 @@ optimizer = raw_model.configure_optimizers(
     weight_decay=0.1, learning_rate=6e-4, device_type=device
 )
 
+enc = tiktoken.get_encoding("gpt2")
+
 for step in range(50):
     t0 = time.time()
     # once in a while evaluate our validation loss
@@ -395,6 +397,31 @@ for step in range(50):
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
         if master_process:
             print(f"validation loss: {val_loss_accum.item():.4f}")
+    # once in a while sample
+    if step > 0 and step % 100 == 0:
+        model.eval()
+        num_return_seq = 4
+        max_length = 32
+        tokens = enc.encode("Hello, I'm a language model,")
+        tokens = torch.tensor(tokens, dtype=torch.long)
+        tokens = tokens.unsqueeze(0).repeat(num_return_seq, 1)
+        xgen = tokens.to(device)
+        sample_rng = torch.Generator(device)
+        sample_rng.manual_seed(42 + ddp_rank)
+        while xgen.size(1) < max_length:
+            with torch.no_grad():
+                logits, loss = model(xgen)
+                logits = logits[:, -1, :]
+                probs = F.softmax(logits, dim=-1)
+                topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+                ix = torch.multinomial(topk_probs, 1, generator=sample_rng)
+                xcol = torch.gather(topk_indices, -1, ix)
+                xgen = torch.cat((xgen, xcol), dim=1)
+        for i in range(num_return_seq):
+            tokens = xgen[i, :max_length].tolist()
+            decode = enc.decode(tokens)
+            print(f"rank {ddp_rank} sample {i}: {decode}")
+
     # training loop
     model.train()
     optimizer.zero_grad()
