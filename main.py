@@ -430,30 +430,3 @@ for step in range(50):
 
 if ddp:
     destroy_process_group()
-
-import sys
-
-sys.exit(0)
-
-# generate
-torch.manual_seed(42)
-torch.cuda.manual_seed(42)
-while x.size(1) < max_length:
-    with torch.no_grad():
-        logits = model(x)
-
-        logits = logits[:, -1, :]
-        probs = F.softmax(logits, dim=-1)
-        topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
-
-        ix = torch.multinomial(topk_probs, 1)
-
-        xcol = torch.gather(topk_indices, -1, ix)
-
-        x = torch.cat((x, xcol), dim=1)
-
-# print the generated text
-for i in range(max_return_sequence):
-    tokens = x[i, :max_length].tolist()
-    decode = enc.decode(tokens)
-    print(">", decode)
